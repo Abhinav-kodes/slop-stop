@@ -60,3 +60,21 @@ export function checkPyPiPackage(
 ): Promise<PackageCheckResult> {
   return checkRegistry(packageName, PYPI_REGISTRY);
 }
+
+export async function checkPackages(
+  packages: string[],
+  registry: 'npm' | 'pypi',
+  concurrency: number = 10,
+): Promise<PackageCheckResult[]> {
+  const checker =
+    registry === 'npm' ? checkNpmPackage : checkPyPiPackage;
+  const results: PackageCheckResult[] = [];
+
+  for (let i = 0; i < packages.length; i += concurrency) {
+    const batch = packages.slice(i, i + concurrency);
+    const batchResults = await Promise.all(batch.map(checker));
+    results.push(...batchResults);
+  }
+
+  return results;
+}

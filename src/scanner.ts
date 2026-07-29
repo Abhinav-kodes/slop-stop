@@ -11,8 +11,6 @@ const PLUGINS: parser.ParserPlugin[] = [
   'dynamicImport',
 ];
 
-const PYPI_REQUIRE_RE = /^(?:--requirement\s+)?\s*([a-zA-Z0-9][\w.-]*)/m;
-
 export function extractDeps(filePath: string): string[] {
   const ext = path.extname(filePath);
   const base = path.basename(filePath);
@@ -35,11 +33,17 @@ export function extractDeps(filePath: string): string[] {
 
 export function extractJsImports(filePath: string): string[] {
   const code = fs.readFileSync(filePath, 'utf-8');
+  return extractJsImportsFromCode(code, path.extname(filePath));
+}
+
+export function extractJsImportsFromCode(
+  code: string,
+  ext: string = '.js',
+): string[] {
   const packages: Set<string> = new Set();
 
   let ast: parser.ParseResult<any>;
   try {
-    const ext = path.extname(filePath);
     const plugins = [...PLUGINS];
     if (ext === '.ts') {
       plugins.push('decorators-legacy');
@@ -48,8 +52,7 @@ export function extractJsImports(filePath: string): string[] {
       sourceType: 'unambiguous',
       plugins,
     });
-  } catch (e) {
-    console.error(`Failed to parse ${filePath}:`, (e as Error).message);
+  } catch {
     return [];
   }
 
@@ -82,6 +85,10 @@ export function extractJsImports(filePath: string): string[] {
 
 export function extractPythonImports(filePath: string): string[] {
   const code = fs.readFileSync(filePath, 'utf-8');
+  return extractPythonImportsFromCode(code);
+}
+
+export function extractPythonImportsFromCode(code: string): string[] {
   const packages: Set<string> = new Set();
   const lines = code.split('\n');
 
@@ -112,25 +119,35 @@ export function extractPythonImports(filePath: string): string[] {
 export function extractPackageJsonDeps(filePath: string): string[] {
   try {
     const content = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-    const packages: Set<string> = new Set();
-    const depFields = ['dependencies', 'devDependencies', 'peerDependencies'];
-
-    for (const field of depFields) {
-      if (content[field]) {
-        for (const dep of Object.keys(content[field])) {
-          packages.add(dep);
-        }
-      }
-    }
-
-    return Array.from(packages).sort();
+    return extractPackageJsonDepsFromJson(content);
   } catch {
     return [];
   }
 }
 
+export function extractPackageJsonDepsFromJson(content: {
+  [key: string]: any;
+}): string[] {
+  const packages: Set<string> = new Set();
+  const depFields = ['dependencies', 'devDependencies', 'peerDependencies'];
+
+  for (const field of depFields) {
+    if (content[field]) {
+      for (const dep of Object.keys(content[field])) {
+        packages.add(dep);
+      }
+    }
+  }
+
+  return Array.from(packages).sort();
+}
+
 export function extractRequirementsTxt(filePath: string): string[] {
   const code = fs.readFileSync(filePath, 'utf-8');
+  return extractRequirementsTxtFromCode(code);
+}
+
+export function extractRequirementsTxtFromCode(code: string): string[] {
   const packages: string[] = [];
 
   for (const line of code.split('\n')) {

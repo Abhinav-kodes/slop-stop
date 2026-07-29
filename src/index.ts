@@ -4,8 +4,7 @@ import * as fs from 'fs';
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { extractDeps } from './scanner';
-import { checkNpmPackage, checkPyPiPackage } from './registry';
-import type { PackageCheckResult } from './registry';
+import { checkPackages } from './registry';
 
 const program = new Command();
 
@@ -31,14 +30,8 @@ program
       return;
     }
 
-    const results: PackageCheckResult[] = await Promise.all(
-      packages.map((pkg) => {
-        if (file.endsWith('.py') || file.endsWith('requirements.txt')) {
-          return checkPyPiPackage(pkg);
-        }
-        return checkNpmPackage(pkg);
-      })
-    );
+    const registry = file.endsWith('.py') || file.endsWith('requirements.txt') ? 'pypi' : 'npm';
+    const results = await checkPackages(packages, registry);
 
     let hallucinationCount = 0;
     for (const result of results) {
