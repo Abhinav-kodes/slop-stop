@@ -1,4 +1,5 @@
 const NPM_REGISTRY = 'https://registry.npmjs.org';
+const PYPI_REGISTRY = 'https://pypi.org/pypi';
 
 export interface PackageCheckResult {
   packageName: string;
@@ -7,9 +8,20 @@ export interface PackageCheckResult {
   error?: string;
 }
 
-export async function checkNpmPackage(packageName: string): Promise<PackageCheckResult> {
+function registryUrl(packageName: string, registry: string): string {
+  const encoded = encodeURIComponent(packageName);
+  if (registry === PYPI_REGISTRY) {
+    return `${registry}/${encoded}/json`;
+  }
+  return `${registry}/${encoded}`;
+}
+
+async function checkRegistry(
+  packageName: string,
+  registry: string,
+): Promise<PackageCheckResult> {
   try {
-    const url = `${NPM_REGISTRY}/${encodeURIComponent(packageName)}`;
+    const url = registryUrl(packageName, registry);
     const response = await fetch(url, {
       headers: { Accept: 'application/json' },
     });
@@ -35,4 +47,16 @@ export async function checkNpmPackage(packageName: string): Promise<PackageCheck
       error: (e as Error).message,
     };
   }
+}
+
+export function checkNpmPackage(
+  packageName: string,
+): Promise<PackageCheckResult> {
+  return checkRegistry(packageName, NPM_REGISTRY);
+}
+
+export function checkPyPiPackage(
+  packageName: string,
+): Promise<PackageCheckResult> {
+  return checkRegistry(packageName, PYPI_REGISTRY);
 }

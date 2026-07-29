@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 
+import * as fs from 'fs';
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { extractJsImports } from './scanner';
-import { checkNpmPackage } from './registry';
+import { extractDeps } from './scanner';
+import { checkNpmPackage, checkPyPiPackage } from './registry';
+import type { PackageCheckResult } from './registry';
 
 const program = new Command();
 
@@ -17,15 +19,25 @@ program
   .description('Check a file for hallucinated package imports')
   .argument('<file>', 'path to the file to check')
   .action(async (file: string) => {
+    if (!fs.existsSync(file)) {
+      console.log(chalk.red(`File not found: ${file}`));
+      process.exit(1);
+    }
+
     console.log(chalk.blue(`Checking ${file}...`));
-    const packages = extractJsImports(file);
+    const packages = extractDeps(file);
     if (packages.length === 0) {
-      console.log(chalk.green('No third-party package imports found.'));
+      console.log(chalk.green('No third-party packages found.'));
       return;
     }
 
-    const results = await Promise.all(
-      packages.map((pkg) => checkNpmPackage(pkg))
+    const results: PackageCheckResult[] = await Promise.all(
+      packages.map((pkg) => {
+        if (file.endsWith('.py') || file.endsWith('requirements.txt')) {
+          return checkPyPiPackage(pkg);
+        }
+        return checkNpmPackage(pkg);
+      })
     );
 
     let hallucinationCount = 0;
@@ -41,10 +53,10 @@ program
     console.log();
     if (hallucinationCount > 0) {
       console.log(
-        chalk.red(`⚠ Found ${hallucinationCount} hallucinated package(s).`)
+        chalk.red(`Found ${hallucinationCount} hallucinated package(s).`)
       );
     } else {
-      console.log(chalk.green('All packages verified on npm.'));
+      console.log(chalk.green('All packages verified on registry.'));
     }
   });
 
