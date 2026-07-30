@@ -5,6 +5,8 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { extractDeps } from './scanner';
 import { checkPackages } from './registry';
+import { evaluateNpmPackage, evaluatePyPiPackage } from './heuristics';
+import { isAllowed } from './config';
 
 const program = new Command();
 
@@ -30,25 +32,49 @@ program
       return;
     }
 
-    const registry = file.endsWith('.py') || file.endsWith('requirements.txt') ? 'pypi' : 'npm';
+    const isPy = file.endsWith('.py') || file.endsWith('requirements.txt');
+    const registry = isPy ? 'pypi' : 'npm';
     const results = await checkPackages(packages, registry);
 
     let hallucinationCount = 0;
+    let suspiciousCount = 0;
+
     for (const result of results) {
-      if (result.exists) {
-        console.log(`  ${chalk.green('[PASS]')} ${result.packageName}`);
-      } else {
-        console.log(`  ${chalk.red('[HALLUCINATION]')} ${result.packageName}`);
-        hallucinationCount++;
+      if (isAllowed(result.packageName)) {
+        console.log(`  ${chalk.green('[PASS]')} ${result.packageName} ${chalk.dim('(allowlisted)')}`);
+        continue;
+      }
+
+      const evaluation = isPy
+        ? evaluatePyPiPackage(result.exists, result.data)
+        : evaluateNpmPackage(result.exists, result.data);
+
+      switch (evaluation.severity) {
+        case 'PASS':
+          console.log(`  ${chalk.green('[PASS]')} ${result.packageName}`);
+          break;
+        case 'SUSPICIOUS':
+          console.log(`  ${chalk.yellow('[SUSPICIOUS]')} ${result.packageName}`);
+          for (const reason of evaluation.reasons) {
+            console.log(`    ${chalk.yellow('→')} ${reason}`);
+          }
+          suspiciousCount++;
+          break;
+        case 'HALLUCINATION':
+          console.log(`  ${chalk.red('[HALLUCINATION]')} ${result.packageName}`);
+          hallucinationCount++;
+          break;
       }
     }
 
     console.log();
     if (hallucinationCount > 0) {
-      console.log(
-        chalk.red(`Found ${hallucinationCount} hallucinated package(s).`)
-      );
-    } else {
+      console.log(chalk.red(`Found ${hallucinationCount} hallucinated package(s).`));
+    }
+    if (suspiciousCount > 0) {
+      console.log(chalk.yellow(`Found ${suspiciousCount} suspicious package(s) (possible slopsquatting).`));
+    }
+    if (hallucinationCount === 0 && suspiciousCount === 0) {
       console.log(chalk.green('All packages verified on registry.'));
     }
   });

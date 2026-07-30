@@ -1,3 +1,5 @@
+import { LRUCache } from 'lru-cache';
+
 const NPM_REGISTRY = 'https://registry.npmjs.org';
 const PYPI_REGISTRY = 'https://pypi.org/pypi';
 
@@ -6,6 +8,32 @@ export interface PackageCheckResult {
   exists: boolean;
   data?: any;
   error?: string;
+}
+
+type RegistryStatus = 'REGISTRY_DOWN';
+
+const cache = new LRUCache<string, PackageCheckResult | RegistryStatus>({
+  max: 500,
+  ttl: 1000 * 60 * 60 * 24,
+});
+
+function cacheKey(packageName: string, registry: string): string {
+  return `${registry}:${packageName}`;
+}
+
+function setCache(
+  key: string,
+  result: PackageCheckResult | RegistryStatus,
+): void {
+  if (result === 'REGISTRY_DOWN') {
+    cache.set(key, result, { ttl: 1000 * 60 * 5 });
+    return;
+  }
+  if (!result.exists) {
+    cache.set(key, result, { ttl: 1000 * 60 * 60 * 24 * 7 });
+    return;
+  }
+  cache.set(key, result, { ttl: 1000 * 60 * 60 * 24 });
 }
 
 function registryUrl(packageName: string, registry: string): string {
@@ -20,32 +48,44 @@ async function checkRegistry(
   packageName: string,
   registry: string,
 ): Promise<PackageCheckResult> {
+  const key = cacheKey(packageName, registry);
+  const cached = cache.get(key);
+  if (cached && cached !== 'REGISTRY_DOWN') {
+    return cached;
+  }
+
   try {
     const url = registryUrl(packageName, registry);
     const response = await fetch(url, {
       headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(10000),
     });
 
+    let result: PackageCheckResult;
+
     if (response.status === 404) {
-      return { packageName, exists: false };
-    }
-
-    if (response.status === 200) {
+      result = { packageName, exists: false };
+    } else if (response.status === 200) {
       const data = await response.json();
-      return { packageName, exists: true, data };
+      result = { packageName, exists: true, data };
+    } else {
+      result = {
+        packageName,
+        exists: false,
+        error: `Unexpected status: ${response.status}`,
+      };
     }
 
-    return {
-      packageName,
-      exists: false,
-      error: `Unexpected status: ${response.status}`,
-    };
+    setCache(key, result);
+    return result;
   } catch (e) {
-    return {
-      packageName,
-      exists: false,
-      error: (e as Error).message,
-    };
+    const err = e as Error;
+    if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+      console.warn(`Registry timeout for ${packageName}, failing open`);
+    } else {
+      console.warn(`Registry error for ${packageName}: ${err.message}`);
+    }
+    return { packageName, exists: false, error: err.message };
   }
 }
 
@@ -63,11 +103,11 @@ export function checkPyPiPackage(
 
 export async function checkPackages(
   packages: string[],
-  registry: 'npm' | 'pypi',
+  registryType: 'npm' | 'pypi',
   concurrency: number = 10,
 ): Promise<PackageCheckResult[]> {
   const checker =
-    registry === 'npm' ? checkNpmPackage : checkPyPiPackage;
+    registryType === 'npm' ? checkNpmPackage : checkPyPiPackage;
   const results: PackageCheckResult[] = [];
 
   for (let i = 0; i < packages.length; i += concurrency) {
