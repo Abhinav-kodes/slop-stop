@@ -20,6 +20,7 @@ export interface CheckStagedResult {
   totalPackages: number;
   hallucinationCount: number;
   suspiciousCount: number;
+  durationMs: number;
   details: Array<{
     file: string;
     packageName: string;
@@ -116,6 +117,7 @@ export async function checkStagedFiles(
   targetDir: string = process.cwd(),
   options: { quiet?: boolean } = {},
 ): Promise<CheckStagedResult> {
+  const startTime = performance.now();
   const stagedFiles = getStagedFiles(targetDir);
 
   const summary: CheckStagedResult = {
@@ -124,10 +126,12 @@ export async function checkStagedFiles(
     totalPackages: 0,
     hallucinationCount: 0,
     suspiciousCount: 0,
+    durationMs: 0,
     details: [],
   };
 
   if (stagedFiles.length === 0) {
+    summary.durationMs = Math.round(performance.now() - startTime);
     if (!options.quiet) {
       console.log(chalk.green('✓ No staged code or manifest files to check.'));
     }
@@ -187,6 +191,8 @@ export async function checkStagedFiles(
     summary.exitCode = 0; // Soft Warn or Pass
   }
 
+  summary.durationMs = Math.round(performance.now() - startTime);
+
   if (!options.quiet) {
     logCheckStagedResult(summary);
   }
@@ -196,16 +202,16 @@ export async function checkStagedFiles(
 
 function logCheckStagedResult(summary: CheckStagedResult): void {
   if (summary.hallucinationCount > 0) {
-    console.log('\n' + chalk.bgRed.white.bold(' 🚨 SLOP-STOP INTERCEPTED: COMMIT BLOCKED 🚨 '));
+    console.log('\n' + chalk.bgRed.white.bold(' 🚨 SLOP-STOP INTERCEPTED: COMMIT BLOCKED 🚨 ') + ` ${chalk.dim(`[${summary.durationMs}ms]`)}`);
     console.log(chalk.red.bold(`Found ${summary.hallucinationCount} confirmed hallucinated package(s) in staged files:`));
     for (const detail of summary.details) {
       if (detail.evaluation.severity === 'HALLUCINATION') {
         console.log(`  ${chalk.red('❌')} ${chalk.bold(detail.packageName)} ${chalk.dim(`(in ${detail.file})`)}`);
       }
     }
-    console.log(chalk.red('\nCommit has been HARD BLOCKED. Please remove non-existent packages before committing.\n'));
+    console.log(chalk.red(`\nCommit has been HARD BLOCKED. Please remove non-existent packages before committing.`) + chalk.dim(` (completed in ${summary.durationMs}ms)\n`));
   } else if (summary.suspiciousCount > 0) {
-    console.log('\n' + chalk.bgYellow.black.bold(' ⚠️ SLOP-STOP WARNING: SUSPICIOUS PACKAGES DETECTED ⚠️ '));
+    console.log('\n' + chalk.bgYellow.black.bold(' ⚠️ SLOP-STOP WARNING: SUSPICIOUS PACKAGES DETECTED ⚠️ ') + ` ${chalk.dim(`[${summary.durationMs}ms]`)}`);
     console.log(chalk.yellow(`Found ${summary.suspiciousCount} suspicious package(s) (high slopsquatting risk):`));
     for (const detail of summary.details) {
       if (detail.evaluation.severity === 'SUSPICIOUS') {
@@ -215,8 +221,9 @@ function logCheckStagedResult(summary: CheckStagedResult): void {
         }
       }
     }
-    console.log(chalk.dim('\nCommit allowed (Soft Warn). Please verify package authenticity.\n'));
+    console.log(chalk.dim(`\nCommit allowed (Soft Warn). Please verify package authenticity. (completed in ${summary.durationMs}ms)\n`));
   } else {
-    console.log(chalk.green(`\n✓ All ${summary.totalPackages} staged package(s) across ${summary.totalFiles} file(s) verified on registry.\n`));
+    console.log(chalk.green(`\n✓ All ${summary.totalPackages} staged package(s) across ${summary.totalFiles} file(s) verified on registry.`) + chalk.dim(` [${summary.durationMs}ms]\n`));
   }
 }
+

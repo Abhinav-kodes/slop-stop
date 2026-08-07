@@ -19,6 +19,7 @@ export interface ScanSummary {
   suspicious: number;
   hallucinated: number;
   allowlisted: number;
+  durationMs: number;
   details: Array<{
     packageName: string;
     evaluation: EvaluationResult;
@@ -30,6 +31,7 @@ export async function scanFileForWatcher(
   filePath: string,
   options: WatcherOptions = {},
 ): Promise<ScanSummary> {
+  const startTime = performance.now();
   const packages = extractDeps(filePath);
   const isPy = filePath.endsWith('.py') || filePath.endsWith('requirements.txt');
   const registry = isPy ? 'pypi' : 'npm';
@@ -41,10 +43,12 @@ export async function scanFileForWatcher(
     suspicious: 0,
     hallucinated: 0,
     allowlisted: 0,
+    durationMs: 0,
     details: [],
   };
 
   if (packages.length === 0) {
+    summary.durationMs = Math.round(performance.now() - startTime);
     if (options.onScanComplete) {
       options.onScanComplete(filePath, summary);
     }
@@ -87,6 +91,8 @@ export async function scanFileForWatcher(
     }
   }
 
+  summary.durationMs = Math.round(performance.now() - startTime);
+
   if (!options.quiet) {
     logWatcherResult(summary);
   }
@@ -102,7 +108,7 @@ function logWatcherResult(summary: ScanSummary): void {
   const timestamp = new Date().toLocaleTimeString();
 
   if (summary.hallucinated > 0) {
-    console.log('\n' + chalk.bgRed.white.bold(` 🚨 SLOP-STOP INTERCEPTED 🚨 `) + ` ${chalk.dim(`[${timestamp}]`)}`);
+    console.log('\n' + chalk.bgRed.white.bold(` 🚨 SLOP-STOP INTERCEPTED 🚨 `) + ` ${chalk.dim(`[${timestamp} | ${summary.durationMs}ms]`)}`);
     console.log(chalk.red.bold(`File: ${summary.filePath}`));
     console.log(chalk.red(`Found ${summary.hallucinated} hallucinated (non-existent) package(s):`));
     for (const item of summary.details) {
@@ -110,9 +116,9 @@ function logWatcherResult(summary: ScanSummary): void {
         console.log(`  ${chalk.red('❌')} ${chalk.bold(item.packageName)} ${chalk.dim('(404 Not Found)')}`);
       }
     }
-    console.log(chalk.dim('Action required: Remove these imports immediately.\n'));
+    console.log(chalk.dim(`Action required: Remove these imports immediately. (completed in ${summary.durationMs}ms)\n`));
   } else if (summary.suspicious > 0) {
-    console.log('\n' + chalk.bgYellow.black.bold(` ⚠️ SLOP-STOP WARNING ⚠️ `) + ` ${chalk.dim(`[${timestamp}]`)}`);
+    console.log('\n' + chalk.bgYellow.black.bold(` ⚠️ SLOP-STOP WARNING ⚠️ `) + ` ${chalk.dim(`[${timestamp} | ${summary.durationMs}ms]`)}`);
     console.log(chalk.yellow.bold(`File: ${summary.filePath}`));
     console.log(chalk.yellow(`Found ${summary.suspicious} suspicious package(s) (high slopsquatting risk):`));
     for (const item of summary.details) {
@@ -123,15 +129,17 @@ function logWatcherResult(summary: ScanSummary): void {
         }
       }
     }
-    console.log(chalk.dim('Recommendation: Verify package authenticity before running code.\n'));
+    console.log(chalk.dim(`Recommendation: Verify package authenticity before running code. (completed in ${summary.durationMs}ms)\n`));
   } else {
     console.log(
       chalk.dim(`[${timestamp}] `) +
         chalk.green('✓') +
-        ` Verified ${chalk.cyan(summary.filePath)} (${summary.total} package(s) safe)`,
+        ` Verified ${chalk.cyan(summary.filePath)} (${summary.total} package(s) safe) ` +
+        chalk.dim(`[${summary.durationMs}ms]`),
     );
   }
 }
+
 
 export function startWatcher(
   targetDir: string = process.cwd(),

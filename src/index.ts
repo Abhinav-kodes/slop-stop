@@ -24,6 +24,7 @@ program
   .description('Check a file for hallucinated package imports')
   .argument('<file>', 'path to the file to check')
   .action(async (file: string) => {
+    const startTime = performance.now();
     if (!fs.existsSync(file)) {
       console.log(chalk.red(`File not found: ${file}`));
       process.exit(1);
@@ -71,17 +72,20 @@ program
       }
     }
 
+    const durationMs = Math.round(performance.now() - startTime);
+
     console.log();
     if (hallucinationCount > 0) {
-      console.log(chalk.red(`Found ${hallucinationCount} hallucinated package(s).`));
+      console.log(chalk.red(`Found ${hallucinationCount} hallucinated package(s).`) + chalk.dim(` [${durationMs}ms]`));
     }
     if (suspiciousCount > 0) {
-      console.log(chalk.yellow(`Found ${suspiciousCount} suspicious package(s) (possible slopsquatting).`));
+      console.log(chalk.yellow(`Found ${suspiciousCount} suspicious package(s) (possible slopsquatting).`) + chalk.dim(` [${durationMs}ms]`));
     }
     if (hallucinationCount === 0 && suspiciousCount === 0) {
-      console.log(chalk.green('All packages verified on registry.'));
+      console.log(chalk.green('All packages verified on registry.') + chalk.dim(` [${durationMs}ms]`));
     }
   });
+
 
 program
   .command('watch')
