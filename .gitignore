@@ -29,3 +29,7 @@ coverage/
 # Environment
 .env
 .env.local
+
+# Documentation / Roadmap
+ROADMAP.md
+
