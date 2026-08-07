@@ -4,7 +4,8 @@
   "description": "Stop AI agents from importing fake packages.",
   "main": "dist/index.js",
   "bin": {
-    "slop-stop": "./dist/index.js"
+    "slop-stop": "./dist/index.js",
+    "slop-stop-mcp": "./dist/mcp-server.js"
   },
   "files": [
     "dist/"

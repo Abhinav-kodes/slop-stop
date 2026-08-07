@@ -146,8 +146,23 @@ program
     }
   });
 
+import { main as runMcpServer } from './mcp-server';
+
+program
+  .command('mcp')
+  .description('Launch the Slop-Stop MCP Server over stdio transport')
+  .action(async () => {
+    try {
+      await runMcpServer();
+    } catch (err) {
+      console.error('Failed to start MCP server:', err);
+      process.exit(1);
+    }
+  });
+
 if (require.main === module) {
   program.parse(process.argv);
 }
+
 
 

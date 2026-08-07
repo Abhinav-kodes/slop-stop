@@ -36,6 +36,17 @@ export function extractJsImports(filePath: string): string[] {
   return extractJsImportsFromCode(code, path.extname(filePath));
 }
 
+export function normalizePackageName(source: string): string {
+  if (source.startsWith('@')) {
+    const parts = source.split('/');
+    if (parts.length >= 2) {
+      return `${parts[0]}/${parts[1]}`;
+    }
+    return source;
+  }
+  return source.split('/')[0];
+}
+
 export function extractJsImportsFromCode(
   code: string,
   ext: string = '.js',
@@ -61,7 +72,7 @@ export function extractJsImportsFromCode(
       const node = nodePath.node as ImportDeclaration;
       const source = node.source.value;
       if (source && !source.startsWith('.') && !source.startsWith('/')) {
-        packages.add(source);
+        packages.add(normalizePackageName(source));
       }
     },
     CallExpression(nodePath) {
@@ -74,7 +85,7 @@ export function extractJsImportsFromCode(
       ) {
         const source = node.arguments[0].value;
         if (!source.startsWith('.') && !source.startsWith('/')) {
-          packages.add(source);
+          packages.add(normalizePackageName(source));
         }
       }
     },
@@ -82,6 +93,7 @@ export function extractJsImportsFromCode(
 
   return Array.from(packages).sort();
 }
+
 
 export function extractPythonImports(filePath: string): string[] {
   const code = fs.readFileSync(filePath, 'utf-8');
