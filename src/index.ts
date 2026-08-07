@@ -10,6 +10,7 @@ import { isAllowed } from './config';
 
 import * as path from 'path';
 import { startWatcher } from './watcher';
+import { installGitHook, checkStagedFiles } from './hook';
 
 const program = new Command();
 
@@ -113,7 +114,36 @@ program
     process.on('SIGTERM', shutdown);
   });
 
+program
+  .command('install-hook')
+  .description('Install Slop-Stop pre-commit hook into git repository (Husky or native)')
+  .argument('[directory]', 'target git repository directory', '.')
+  .action((directory: string) => {
+    try {
+      const result = installGitHook(path.resolve(directory));
+      console.log(chalk.green(`✓ ${result.message}`));
+    } catch (err) {
+      console.error(chalk.red(`Error installing git hook: ${(err as Error).message}`));
+      process.exit(1);
+    }
+  });
+
+program
+  .command('check-staged')
+  .description('Check staged git files for hallucinated packages (used by pre-commit hook)')
+  .argument('[directory]', 'target git repository directory', '.')
+  .action(async (directory: string) => {
+    try {
+      const result = await checkStagedFiles(path.resolve(directory));
+      process.exit(result.exitCode);
+    } catch (err) {
+      console.error(chalk.red(`Error checking staged files: ${(err as Error).message}`));
+      process.exit(1);
+    }
+  });
+
 if (require.main === module) {
   program.parse(process.argv);
 }
+
 
