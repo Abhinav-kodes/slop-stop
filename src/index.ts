@@ -8,6 +8,9 @@ import { checkPackages } from './registry';
 import { evaluateNpmPackage, evaluatePyPiPackage } from './heuristics';
 import { isAllowed } from './config';
 
+import * as path from 'path';
+import { startWatcher } from './watcher';
+
 const program = new Command();
 
 program
@@ -79,6 +82,38 @@ program
     }
   });
 
+program
+  .command('watch')
+  .description('Monitor workspace in real-time for AI-generated package imports')
+  .argument('[directory]', 'directory path to watch', '.')
+  .option('-d, --debounce <ms>', 'debounce time in milliseconds', '500')
+  .action((directory: string, options: { debounce: string }) => {
+    const targetDir = path.resolve(directory);
+    if (!fs.existsSync(targetDir)) {
+      console.log(chalk.red(`Directory not found: ${targetDir}`));
+      process.exit(1);
+    }
+
+    const debounceMs = parseInt(options.debounce, 10) || 500;
+
+    console.log(chalk.bgCyan.black.bold(' 👁️ SLOP-STOP WATCHER ACTIVE 👁️ '));
+    console.log(chalk.cyan(`Watching ${chalk.bold(targetDir)} for file changes...`));
+    console.log(chalk.dim(`Debounce: ${debounceMs}ms | Press Ctrl+C to exit\n`));
+
+    const watcher = startWatcher(targetDir, { debounceMs });
+
+    const shutdown = () => {
+      console.log(chalk.yellow('\nStopping watcher...'));
+      watcher.close().then(() => {
+        process.exit(0);
+      });
+    };
+
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
+  });
+
 if (require.main === module) {
   program.parse(process.argv);
 }
+
