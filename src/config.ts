@@ -41,3 +41,9 @@ export function getMaxAgeDays(): number {
   const config = loadConfig();
   return config.heuristics?.maxAgeDays ?? 14;
 }
+
+import { isInternal as isInternalRegistryPackage } from './registry-config';
+
+export function isInternal(packageName: string, dir?: string): boolean {
+  return isInternalRegistryPackage(packageName, dir);
+}

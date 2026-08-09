@@ -6,13 +6,16 @@ import chalk from 'chalk';
 import { extractDeps } from './scanner';
 import { checkPackages } from './registry';
 import { evaluateNpmPackage, evaluatePyPiPackage } from './heuristics';
-import { isAllowed } from './config';
+import { isAllowed, isInternal } from './config';
 
 import * as path from 'path';
 import { startWatcher } from './watcher';
 import { installGitHook, checkStagedFiles } from './hook';
+import { LOCKFILE_BASENAMES } from './lockfiles';
+import { checkDrift, verifyLockfileVersions, LockfileVersionViolation } from './drift';
+import { hasPrivateRegistry } from './registry-config';
 
-const program = new Command();
+export const program = new Command();
 
 program
   .name('slop-stop')
@@ -84,6 +87,84 @@ program
     if (hallucinationCount === 0 && suspiciousCount === 0) {
       console.log(chalk.green('All packages verified on registry.') + chalk.dim(` [${durationMs}ms]`));
     }
+  });
+
+
+program
+  .command('check-drift')
+  .description('Check manifest vs lockfile drift and verify resolved lockfile versions')
+  .argument('[directory]', 'target directory', '.')
+  .action(async (directory: string) => {
+    const startTime = performance.now();
+    const targetDir = path.resolve(directory);
+    if (!fs.existsSync(targetDir)) {
+      console.log(chalk.red(`Directory not found: ${targetDir}`));
+      process.exit(1);
+    }
+
+    const report = checkDrift(targetDir);
+    const lockfiles = LOCKFILE_BASENAMES
+      .map((name) => path.join(targetDir, name))
+      .filter((file) => fs.existsSync(file));
+
+    if (report.packages.length === 0 && lockfiles.length === 0) {
+      console.log(chalk.green('No manifest or lockfile found in directory.') + chalk.dim(` [${Math.round(performance.now() - startTime)}ms]`));
+      return;
+    }
+
+    const checks: LockfileVersionViolation[] = [];
+    for (const lockfile of lockfiles) {
+      checks.push(...await verifyLockfileVersions(lockfile, targetDir));
+    }
+
+    let suspiciousCount = report.suspiciousCount;
+    let hallucinationCount = 0;
+
+    console.log(chalk.blue(`Checking drift in ${targetDir}...`));
+
+    for (const pkg of report.packages) {
+      const statusColor = pkg.severity === 'SUSPICIOUS'
+        ? chalk.yellow(`[${pkg.severity}]`)
+        : chalk.green(`[${pkg.severity}]`);
+      console.log(`  ${chalk.bold(pkg.name)} ${chalk.dim(pkg.manifestRange ?? '-')} → ${chalk.dim(pkg.lockfileVersion ?? '-')} ${statusColor}`);
+      for (const reason of pkg.reasons) {
+        console.log(`    ${chalk.dim('→')} ${reason}`);
+      }
+    }
+
+    for (const check of checks) {
+      switch (check.severity) {
+        case 'PASS':
+          console.log(`  ${chalk.green('[PASS]')} ${check.packageName}@${check.version}`);
+          break;
+        case 'SUSPICIOUS':
+          console.log(`  ${chalk.yellow('[SUSPICIOUS]')} ${check.packageName}@${check.version}`);
+          for (const reason of check.reasons) {
+            console.log(`    ${chalk.yellow('→')} ${reason}`);
+          }
+          suspiciousCount++;
+          break;
+        case 'HALLUCINATION':
+          console.log(`  ${chalk.red('[HALLUCINATION]')} ${check.packageName}@${check.version}`);
+          for (const reason of check.reasons) {
+            console.log(`    ${chalk.red('→')} ${reason}`);
+          }
+          hallucinationCount++;
+          break;
+      }
+    }
+
+    const durationMs = Math.round(performance.now() - startTime);
+    console.log();
+    if (hallucinationCount > 0) {
+      console.log(chalk.red(`Found ${hallucinationCount} locked version(s) that do not exist on the registry.`) + chalk.dim(` [${durationMs}ms]`));
+      process.exit(1);
+    }
+    if (suspiciousCount > 0) {
+      console.log(chalk.yellow(`Found ${suspiciousCount} drift or version issue(s).`) + chalk.dim(` [${durationMs}ms]`));
+      return;
+    }
+    console.log(chalk.green('No drift detected. All locked versions verified.') + chalk.dim(` [${durationMs}ms]`));
   });
 
 

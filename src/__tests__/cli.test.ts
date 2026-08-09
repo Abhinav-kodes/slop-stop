@@ -5,4 +5,10 @@ describe('CLI entry point', () => {
     const cli = await import('../index');
     expect(cli).toBeDefined();
   });
+
+  it('registers the check-drift command', async () => {
+    const { program } = await import('../index');
+    const names = program.commands.map((c) => c.name());
+    expect(names).toContain('check-drift');
+  });
 });
