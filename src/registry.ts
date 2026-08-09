@@ -118,3 +118,74 @@ export async function checkPackages(
 
   return results;
 }
+
+const VERSION_CACHE_TTL = 1000 * 60 * 60 * 24;
+
+async function checkRegistryVersion(
+  packageName: string,
+  version: string,
+  registry: string,
+  url: string,
+): Promise<PackageCheckResult> {
+  const key = cacheKey(packageName, `${registry}:version`);
+  const versionKey = `${key}@${version}`;
+  const cached = cache.get(versionKey);
+  if (cached && cached !== 'REGISTRY_DOWN') {
+    return cached;
+  }
+
+  try {
+    const response = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(10000),
+    });
+
+    let result: PackageCheckResult;
+    if (response.status === 404) {
+      result = { packageName, exists: false };
+    } else if (response.status === 200) {
+      const data = await response.json();
+      result = { packageName, exists: true, data };
+    } else {
+      result = {
+        packageName,
+        exists: false,
+        error: `Unexpected status: ${response.status}`,
+      };
+    }
+
+    cache.set(versionKey, result, { ttl: VERSION_CACHE_TTL });
+    return result;
+  } catch (e) {
+    const err = e as Error;
+    if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+      console.warn(`Registry timeout for ${packageName}@${version}, failing open`);
+    } else {
+      console.warn(`Registry error for ${packageName}@${version}: ${err.message}`);
+    }
+    return { packageName, exists: false, error: err.message };
+  }
+}
+
+export function checkPackageVersion(
+  packageName: string,
+  version: string,
+  registry: 'npm' | 'pypi',
+): Promise<PackageCheckResult> {
+  const encoded = encodeURIComponent(packageName);
+  const encodedVersion = encodeURIComponent(version);
+  if (registry === 'pypi') {
+    return checkRegistryVersion(
+      packageName,
+      version,
+      PYPI_REGISTRY,
+      `${PYPI_REGISTRY}/${encoded}/${encodedVersion}/json`,
+    );
+  }
+  return checkRegistryVersion(
+    packageName,
+    version,
+    NPM_REGISTRY,
+    `${NPM_REGISTRY}/${encoded}/${encodedVersion}`,
+  );
+}
