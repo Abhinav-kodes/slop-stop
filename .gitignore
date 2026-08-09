@@ -33,3 +33,4 @@ coverage/
 # Documentation / Roadmap
 ROADMAP.md
 
+.worktrees/
