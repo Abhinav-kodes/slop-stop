@@ -13,6 +13,7 @@ describe('Watcher Daemon', () => {
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+    vi.restoreAllMocks();
   });
 
   describe('scanFileForWatcher', () => {
@@ -70,8 +71,7 @@ describe('Watcher Daemon', () => {
     });
 
     it('scanFileForWatcher auto-passes internal scopes without registry calls', async () => {
-      const fetchSpy = vi.fn();
-      globalThis.fetch = fetchSpy;
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({} as Response);
       fs.writeFileSync(path.join(tmpDir, '.npmrc'), '@acme:registry=https://npm.acme.io\n');
       const testFile = path.join(tmpDir, 'internal.ts');
       fs.writeFileSync(testFile, "import x from '@acme/design-system';");

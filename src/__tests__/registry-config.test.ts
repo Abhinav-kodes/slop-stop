@@ -144,6 +144,12 @@ describe('registry-config private registry detection', () => {
       expect(isInternal('any-name', tmpDir)).toBe(false);
     });
 
+    it('bare scoped names without a slash are not treated as internal', () => {
+      write('.npmrc', '@acm:registry=https://npm.acme.io\n');
+      expect(isInternal('@acme', tmpDir)).toBe(false);
+      expect(isInternal('@acm/pkg', tmpDir)).toBe(true);
+    });
+
     it('false when nothing is configured', () => {
       expect(isInternal('anything', tmpDir)).toBe(false);
     });

@@ -5,7 +5,7 @@ import { extractDeps } from './scanner';
 import { checkPackages, PackageCheckResult } from './registry';
 import { evaluateNpmPackage, evaluatePyPiPackage, EvaluationResult } from './heuristics';
 import { isAllowed, isInternal } from './config';
-import { isLockfile, lockfileRegistryType } from './lockfiles';
+import { isLockfile } from './lockfiles';
 import { verifyLockfileVersions } from './drift';
 
 export interface WatcherOptions {

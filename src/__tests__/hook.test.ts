@@ -14,6 +14,7 @@ describe('Git Hook & Staged Checker', () => {
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+    vi.restoreAllMocks();
   });
 
   describe('installGitHook', () => {
@@ -127,6 +128,12 @@ describe('Git Hook & Staged Checker', () => {
       const result = await checkStagedFiles(tmpDir, { quiet: true });
       expect(result.exitCode).toBe(0);
       expect(result.suspiciousCount).toBeGreaterThan(0);
+      const driftRow = result.details.find(
+        (d) =>
+          d.file === 'package-lock.json' &&
+          d.evaluation.reasons.some((r) => r.includes('Version drift')),
+      );
+      expect(driftRow).toBeDefined();
     });
 
     it('auto-passes internal scoped packages without registry calls', async () => {
@@ -134,8 +141,7 @@ describe('Git Hook & Staged Checker', () => {
       execSync('git config user.name "Test"', { cwd: tmpDir, stdio: 'ignore' });
       execSync('git config user.email "test@example.com"', { cwd: tmpDir, stdio: 'ignore' });
 
-      const fetchSpy = vi.fn();
-      globalThis.fetch = fetchSpy;
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({} as Response);
 
       fs.writeFileSync(path.join(tmpDir, '.npmrc'), '@acme:registry=https://npm.acme.io\n');
       const testFile = path.join(tmpDir, 'internal.ts');

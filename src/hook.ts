@@ -226,6 +226,7 @@ export async function checkStagedFiles(
   if (stagedLockfile) {
     const driftReport = checkDrift(targetDir);
     for (const pkg of driftReport.packages) {
+      summary.totalPackages++;
       if (pkg.severity === 'SUSPICIOUS') {
         summary.details.push({
           file: stagedLockfile,

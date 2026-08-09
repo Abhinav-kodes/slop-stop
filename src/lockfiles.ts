@@ -92,7 +92,7 @@ function stripPnpmSuffix(version: string): string {
 function parsePnpmKey(key: string): LockfilePackage | null {
   const urlMatch = key.match(/^(?:https?:\/\/)?[^/]+\/(@[^/]+\/[^/]+|[^/]+)\/([^/]+)$/);
   if (urlMatch) {
-    return { name: urlMatch[1], version: urlMatch[2] };
+    return { name: urlMatch[1], version: stripPnpmSuffix(urlMatch[2]) };
   }
   const scoped = key.match(/^(@[^@]+\/[^@/]+)@(.+)$/);
   if (scoped) {
@@ -176,8 +176,9 @@ function parseYarnLock(contents: string): LockfilePackage[] {
     const version = (entry as { version?: unknown }).version;
     if (typeof version !== 'string' && typeof version !== 'number') continue;
     const name = yarnNameFromKey(key);
-    if (seen.has(name)) continue;
-    seen.add(name);
+    const dedupeKey = `${name}@${version}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
     packages.push({ name, version: String(version) });
   }
   return packages;

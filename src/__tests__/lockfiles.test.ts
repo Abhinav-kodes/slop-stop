@@ -84,6 +84,18 @@ describe('lockfiles', () => {
     expect(result.find((p) => p.name === 'debug')?.version).toBe('4.3.4');
   });
 
+  it('strips peer-dependency suffix from pnpm URL-form keys', () => {
+    const filePath = writeFixture('pnpm-lock.yaml', [
+      'lockfileVersion: "9.0"',
+      'packages:',
+      '  registry.npmjs.org/foo/1.0.0(peer@2.0.0):',
+      '    resolution: {integrity: "sha512-aaa"}',
+      '',
+    ].join('\n'));
+    const result = parseLockfile(filePath);
+    expect(result).toEqual([{ name: 'foo', version: '1.0.0' }]);
+  });
+
   it('parse yarn.lock v1 including multi-key entries', () => {
     const filePath = writeFixture('yarn.lock', [
       '# yarn lockfile v1',
@@ -97,6 +109,24 @@ describe('lockfiles', () => {
     const result = parseLockfile(filePath);
     expect(sortedNames(result)).toEqual(['@babel/code-frame', 'lodash']);
     expect(result.find((p) => p.name === '@babel/code-frame')?.version).toBe('7.24.17');
+  });
+
+  it('keeps distinct versions for the same yarn package at different selectors', () => {
+    const filePath = writeFixture('yarn.lock', [
+      '# yarn lockfile v1',
+      '"foo@^1.0.0":',
+      '  version "1.2.0"',
+      '  resolved "https://registry.yarnpkg.com/foo/-/foo-1.2.0.tgz"',
+      '"foo@^1.2.0":',
+      '  version "1.9.0"',
+      '  resolved "https://registry.yarnpkg.com/foo/-/foo-1.9.0.tgz"',
+      '',
+    ].join('\n'));
+    const result = parseLockfile(filePath);
+    expect(result).toEqual([
+      { name: 'foo', version: '1.2.0' },
+      { name: 'foo', version: '1.9.0' },
+    ]);
   });
 
   it('parses yarn.lock v2+ YAML format', () => {

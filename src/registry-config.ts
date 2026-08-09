@@ -161,7 +161,9 @@ export function hasPrivateRegistry(dir: string = process.cwd()): boolean {
 export function isInternal(packageName: string, dir: string = process.cwd()): boolean {
   const config = loadRegistryConfig(dir);
   if (packageName.startsWith('@')) {
-    const scope = packageName.slice(0, packageName.indexOf('/'));
+    const slash = packageName.indexOf('/');
+    if (slash === -1) return false;
+    const scope = packageName.slice(0, slash);
     return config.npmScopeRegistry.has(scope);
   }
   const hasPrivatePy =
