@@ -4,7 +4,9 @@ import chalk from 'chalk';
 import { extractDeps } from './scanner';
 import { checkPackages, PackageCheckResult } from './registry';
 import { evaluateNpmPackage, evaluatePyPiPackage, EvaluationResult } from './heuristics';
-import { isAllowed } from './config';
+import { isAllowed, isInternal } from './config';
+import { isLockfile, lockfileRegistryType } from './lockfiles';
+import { verifyLockfileVersions } from './drift';
 
 export interface WatcherOptions {
   debounceMs?: number;
@@ -32,6 +34,48 @@ export async function scanFileForWatcher(
   options: WatcherOptions = {},
 ): Promise<ScanSummary> {
   const startTime = performance.now();
+
+  if (isLockfile(filePath)) {
+    const summary: ScanSummary = {
+      filePath,
+      total: 0,
+      passed: 0,
+      suspicious: 0,
+      hallucinated: 0,
+      allowlisted: 0,
+      durationMs: 0,
+      details: [],
+    };
+    const checks = await verifyLockfileVersions(filePath, path.dirname(filePath));
+    summary.total = checks.length;
+    for (const check of checks) {
+      summary.details.push({
+        packageName: check.packageName,
+        evaluation: { severity: check.severity, reasons: check.reasons },
+        allowlisted: false,
+      });
+      switch (check.severity) {
+        case 'PASS':
+          summary.passed++;
+          break;
+        case 'SUSPICIOUS':
+          summary.suspicious++;
+          break;
+        case 'HALLUCINATION':
+          summary.hallucinated++;
+          break;
+      }
+    }
+    summary.durationMs = Math.round(performance.now() - startTime);
+    if (!options.quiet) {
+      logWatcherResult(summary);
+    }
+    if (options.onScanComplete) {
+      options.onScanComplete(filePath, summary);
+    }
+    return summary;
+  }
+
   const packages = extractDeps(filePath);
   const isPy = filePath.endsWith('.py') || filePath.endsWith('requirements.txt');
   const registry = isPy ? 'pypi' : 'npm';
@@ -55,15 +99,30 @@ export async function scanFileForWatcher(
     return summary;
   }
 
-  const results: PackageCheckResult[] = await checkPackages(packages, registry);
+  const pending: string[] = [];
+  const handled: PackageCheckResult[] = [];
+  for (const name of packages) {
+    if (isAllowed(name) || isInternal(name, path.dirname(filePath))) {
+      handled.push({ packageName: name, exists: false });
+    } else {
+      pending.push(name);
+    }
+  }
+
+  const results: PackageCheckResult[] = [
+    ...handled,
+    ...(pending.length > 0 ? await checkPackages(pending, registry) : []),
+  ];
 
   for (const result of results) {
-    if (isAllowed(result.packageName)) {
-      summary.allowlisted++;
+    if (isAllowed(result.packageName) || isInternal(result.packageName, path.dirname(filePath))) {
+      const isAllow = isAllowed(result.packageName);
+      summary.allowlisted += isAllow ? 1 : 0;
+      summary.passed += isAllow ? 0 : 1;
       summary.details.push({
         packageName: result.packageName,
-        evaluation: { severity: 'PASS', reasons: ['allowlisted'] },
-        allowlisted: true,
+        evaluation: { severity: 'PASS', reasons: [isAllow ? 'allowlisted' : 'internal'] },
+        allowlisted: isAllow,
       });
       continue;
     }
@@ -156,6 +215,10 @@ export function startWatcher(
     '**/*.py',
     '**/package.json',
     '**/requirements.txt',
+    '**/package-lock.json',
+    '**/pnpm-lock.yaml',
+    '**/yarn.lock',
+    '**/poetry.lock',
   ];
 
   const watcher = chokidar.watch(watchPatterns, {

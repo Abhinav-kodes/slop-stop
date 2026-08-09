@@ -56,6 +56,31 @@ describe('Watcher Daemon', () => {
       // Without config file, internal-company-sdk will be checked on registry
       expect(summary.total).toBe(1);
     });
+
+    it('scanFileForWatcher verifies lockfile versions (HALLUCINATION on missing version)', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue({ status: 404, json: async () => ({}) } as Response);
+      const lockfilePath = path.join(tmpDir, 'package-lock.json');
+      fs.writeFileSync(lockfilePath, JSON.stringify({
+        packages: { 'node_modules/fake-lock-ver-7777': { version: '7777.0.0' } },
+      }));
+
+      const summary = await scanFileForWatcher(lockfilePath, { quiet: true });
+      expect(summary.hallucinated).toBe(1);
+      expect(summary.details[0].evaluation.severity).toBe('HALLUCINATION');
+    });
+
+    it('scanFileForWatcher auto-passes internal scopes without registry calls', async () => {
+      const fetchSpy = vi.fn();
+      globalThis.fetch = fetchSpy;
+      fs.writeFileSync(path.join(tmpDir, '.npmrc'), '@acme:registry=https://npm.acme.io\n');
+      const testFile = path.join(tmpDir, 'internal.ts');
+      fs.writeFileSync(testFile, "import x from '@acme/design-system';");
+
+      const summary = await scanFileForWatcher(testFile, { quiet: true });
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(summary.passed).toBe(1);
+      expect(summary.allowlisted).toBe(0);
+    });
   });
 
   describe('startWatcher', () => {
