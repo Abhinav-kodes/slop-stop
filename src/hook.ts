@@ -5,7 +5,9 @@ import chalk from 'chalk';
 import { extractDeps } from './scanner';
 import { checkPackages, PackageCheckResult } from './registry';
 import { evaluateNpmPackage, evaluatePyPiPackage, EvaluationResult } from './heuristics';
-import { isAllowed } from './config';
+import { isAllowed, isInternal } from './config';
+import { isLockfile } from './lockfiles';
+import { checkDrift, verifyLockfileVersions } from './drift';
 
 export interface InstallHookResult {
   success: boolean;
@@ -102,11 +104,12 @@ export function getStagedFiles(targetDir: string = process.cwd()): string[] {
       .filter((l) => l.length > 0);
 
     const supportedExts = ['.js', '.jsx', '.ts', '.tsx', '.py'];
+    const supportedBasenames = ['package.json', 'requirements.txt', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'poetry.lock'];
 
     return lines.filter((file) => {
       const ext = path.extname(file);
       const base = path.basename(file);
-      return supportedExts.includes(ext) || base === 'package.json' || base === 'requirements.txt';
+      return supportedExts.includes(ext) || supportedBasenames.includes(base);
     });
   } catch {
     return [];
@@ -146,22 +149,56 @@ export async function checkStagedFiles(
     const fullPath = path.resolve(targetDir, relativeFile);
     if (!fs.existsSync(fullPath)) continue;
 
+    if (isLockfile(relativeFile)) {
+      const checks = await verifyLockfileVersions(fullPath, targetDir);
+      for (const check of checks) {
+        summary.details.push({
+          file: relativeFile,
+          packageName: check.packageName,
+          evaluation: { severity: check.severity, reasons: check.reasons },
+          allowlisted: false,
+        });
+        summary.totalPackages++;
+        if (check.severity === 'HALLUCINATION') {
+          summary.hallucinationCount++;
+        } else if (check.severity === 'SUSPICIOUS') {
+          summary.suspiciousCount++;
+        }
+      }
+      continue;
+    }
+
     const packages = extractDeps(fullPath);
     if (packages.length === 0) continue;
 
-    summary.totalPackages += packages.length;
+    const internalPackages = packages.filter((name) => isInternal(name, targetDir));
+    for (const name of internalPackages) {
+      summary.details.push({
+        file: relativeFile,
+        packageName: name,
+        evaluation: { severity: 'PASS', reasons: ['internal'] },
+        allowlisted: false,
+      });
+      summary.totalPackages++;
+    }
+
+    const externalPackages = packages.filter((name) => !internalPackages.includes(name));
+    if (externalPackages.length === 0) continue;
+
+    summary.totalPackages += externalPackages.length;
     const isPy = relativeFile.endsWith('.py') || relativeFile.endsWith('requirements.txt');
     const registry = isPy ? 'pypi' : 'npm';
 
-    const results: PackageCheckResult[] = await checkPackages(packages, registry);
+    const results: PackageCheckResult[] = await checkPackages(externalPackages, registry);
 
     for (const result of results) {
-      if (isAllowed(result.packageName)) {
+      if (isAllowed(result.packageName) || isInternal(result.packageName, targetDir)) {
+        const reason = isAllowed(result.packageName) ? 'allowlisted' : 'internal';
         summary.details.push({
           file: relativeFile,
           packageName: result.packageName,
-          evaluation: { severity: 'PASS', reasons: ['allowlisted'] },
-          allowlisted: true,
+          evaluation: { severity: 'PASS', reasons: [reason] },
+          allowlisted: isAllowed(result.packageName),
         });
         continue;
       }
@@ -180,6 +217,22 @@ export async function checkStagedFiles(
       if (evaluation.severity === 'HALLUCINATION') {
         summary.hallucinationCount++;
       } else if (evaluation.severity === 'SUSPICIOUS') {
+        summary.suspiciousCount++;
+      }
+    }
+  }
+
+  const stagedLockfile = stagedFiles.find(isLockfile);
+  if (stagedLockfile) {
+    const driftReport = checkDrift(targetDir);
+    for (const pkg of driftReport.packages) {
+      if (pkg.severity === 'SUSPICIOUS') {
+        summary.details.push({
+          file: stagedLockfile,
+          packageName: pkg.name,
+          evaluation: { severity: pkg.severity, reasons: pkg.reasons },
+          allowlisted: false,
+        });
         summary.suspiciousCount++;
       }
     }

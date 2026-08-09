@@ -2,8 +2,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { execSync } from 'child_process';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { installGitHook, checkStagedFiles } from '../hook';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { installGitHook, checkStagedFiles, getStagedFiles } from '../hook';
 
 describe('Git Hook & Staged Checker', () => {
   let tmpDir: string;
@@ -81,6 +81,71 @@ describe('Git Hook & Staged Checker', () => {
       const result = await checkStagedFiles(tmpDir, { quiet: true });
       expect(result.exitCode).toBe(1); // Hard block
       expect(result.hallucinationCount).toBe(1);
+    });
+
+    it('getStagedFiles includes lockfile basenames', () => {
+      execSync('git init', { cwd: tmpDir, stdio: 'ignore' });
+      fs.writeFileSync(path.join(tmpDir, 'package-lock.json'), JSON.stringify({ packages: {} }));
+      fs.writeFileSync(path.join(tmpDir, 'unrelated.txt'), 'x');
+      execSync('git add -A', { cwd: tmpDir, stdio: 'ignore' });
+      const files = getStagedFiles(tmpDir);
+      expect(files).toEqual(['package-lock.json']);
+    });
+
+    it('blocks commit (exit 1) when a staged lockfile contains a non-existent version', async () => {
+      execSync('git init', { cwd: tmpDir, stdio: 'ignore' });
+      execSync('git config user.name "Test"', { cwd: tmpDir, stdio: 'ignore' });
+      execSync('git config user.email "test@example.com"', { cwd: tmpDir, stdio: 'ignore' });
+
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue({ status: 404, json: async () => ({}) } as Response);
+
+      fs.writeFileSync(path.join(tmpDir, 'package-lock.json'), JSON.stringify({
+        packages: { 'node_modules/fake-ver-xyz-9999': { version: '404.0.0' } },
+      }));
+
+      execSync('git add package-lock.json', { cwd: tmpDir, stdio: 'ignore' });
+
+      const result = await checkStagedFiles(tmpDir, { quiet: true });
+      expect(result.exitCode).toBe(1);
+      expect(result.hallucinationCount).toBe(1);
+    });
+
+    it('soft-warns (exit 0) on drift when a staged lockfile breaks the manifest range', async () => {
+      execSync('git init', { cwd: tmpDir, stdio: 'ignore' });
+      execSync('git config user.name "Test"', { cwd: tmpDir, stdio: 'ignore' });
+      execSync('git config user.email "test@example.com"', { cwd: tmpDir, stdio: 'ignore' });
+
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue({ status: 200, json: async () => ({}) } as Response);
+
+      fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({ dependencies: { express: '^2.0.0' } }));
+      fs.writeFileSync(path.join(tmpDir, 'package-lock.json'), JSON.stringify({
+        packages: { 'node_modules/express': { version: '1.0.3' } },
+      }));
+
+      execSync('git add package.json package-lock.json', { cwd: tmpDir, stdio: 'ignore' });
+
+      const result = await checkStagedFiles(tmpDir, { quiet: true });
+      expect(result.exitCode).toBe(0);
+      expect(result.suspiciousCount).toBeGreaterThan(0);
+    });
+
+    it('auto-passes internal scoped packages without registry calls', async () => {
+      execSync('git init', { cwd: tmpDir, stdio: 'ignore' });
+      execSync('git config user.name "Test"', { cwd: tmpDir, stdio: 'ignore' });
+      execSync('git config user.email "test@example.com"', { cwd: tmpDir, stdio: 'ignore' });
+
+      const fetchSpy = vi.fn();
+      globalThis.fetch = fetchSpy;
+
+      fs.writeFileSync(path.join(tmpDir, '.npmrc'), '@acme:registry=https://npm.acme.io\n');
+      const testFile = path.join(tmpDir, 'internal.ts');
+      fs.writeFileSync(testFile, "import x from '@acme/design-system';");
+      execSync('git add -A .npmrc internal.ts', { cwd: tmpDir, stdio: 'ignore' });
+
+      const result = await checkStagedFiles(tmpDir, { quiet: true });
+      expect(result.exitCode).toBe(0);
+      expect(result.hallucinationCount).toBe(0);
+      expect(fetchSpy).not.toHaveBeenCalled();
     });
   });
 });
