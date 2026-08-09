@@ -11,7 +11,7 @@ import { isAllowed, isInternal } from './config';
 import * as path from 'path';
 import { startWatcher } from './watcher';
 import { installGitHook, checkStagedFiles } from './hook';
-import { LOCKFILE_BASENAMES } from './lockfiles';
+import { LOCKFILE_BASENAMES, isLockfile } from './lockfiles';
 import { checkDrift, verifyLockfileVersions, LockfileVersionViolation } from './drift';
 import { hasPrivateRegistry } from './registry-config';
 
@@ -34,6 +34,51 @@ program
     }
 
     console.log(chalk.blue(`Checking ${file}...`));
+    const dir = path.dirname(path.resolve(file));
+
+    if (isLockfile(file)) {
+      const checks = await verifyLockfileVersions(path.resolve(file), dir);
+      if (checks.length === 0) {
+        console.log(chalk.green('No packages found in lockfile.'));
+        return;
+      }
+      let hallucinationCount = 0;
+      let suspiciousCount = 0;
+      for (const check of checks) {
+        switch (check.severity) {
+          case 'PASS':
+            console.log(`  ${chalk.green('[PASS]')} ${check.packageName}@${check.version}`);
+            break;
+          case 'SUSPICIOUS':
+            console.log(`  ${chalk.yellow('[SUSPICIOUS]')} ${check.packageName}@${check.version}`);
+            for (const reason of check.reasons) {
+              console.log(`    ${chalk.yellow('→')} ${reason}`);
+            }
+            suspiciousCount++;
+            break;
+          case 'HALLUCINATION':
+            console.log(`  ${chalk.red('[HALLUCINATION]')} ${check.packageName}@${check.version}`);
+            for (const reason of check.reasons) {
+              console.log(`    ${chalk.red('→')} ${reason}`);
+            }
+            hallucinationCount++;
+            break;
+        }
+      }
+      const durationMs = Math.round(performance.now() - startTime);
+      console.log();
+      if (hallucinationCount > 0) {
+        console.log(chalk.red(`Found ${hallucinationCount} locked version(s) that do not exist on the registry.`) + chalk.dim(` [${durationMs}ms]`));
+        return;
+      }
+      if (suspiciousCount > 0) {
+        console.log(chalk.yellow(`Found ${suspiciousCount} suspicious locked version(s).`) + chalk.dim(` [${durationMs}ms]`));
+        return;
+      }
+      console.log(chalk.green('All locked versions verified on registry.') + chalk.dim(` [${durationMs}ms]`));
+      return;
+    }
+
     const packages = extractDeps(file);
     if (packages.length === 0) {
       console.log(chalk.green('No third-party packages found.'));
@@ -48,14 +93,22 @@ program
     let suspiciousCount = 0;
 
     for (const result of results) {
-      if (isAllowed(result.packageName)) {
-        console.log(`  ${chalk.green('[PASS]')} ${result.packageName} ${chalk.dim('(allowlisted)')}`);
+      if (isAllowed(result.packageName) || isInternal(result.packageName, dir)) {
+        const reason = isAllowed(result.packageName) ? 'allowlisted' : 'internal';
+        console.log(`  ${chalk.green('[PASS]')} ${result.packageName} ${chalk.dim(`(${reason})`)}`);
         continue;
       }
 
-      const evaluation = isPy
+      let evaluation = isPy
         ? evaluatePyPiPackage(result.exists, result.data)
         : evaluateNpmPackage(result.exists, result.data);
+
+      if (evaluation.severity === 'HALLUCINATION' && hasPrivateRegistry(dir)) {
+        evaluation = {
+          severity: 'SUSPICIOUS',
+          reasons: ['possible internal package — consider scoping'],
+        };
+      }
 
       switch (evaluation.severity) {
         case 'PASS':
